@@ -1,8 +1,14 @@
 const socket = @import("../socket/socket.zig");
 const std = @import("std");
 const stream = @import("../binarystream/stream.zig");
+const Framer = @import("./framer.zig").Framer;
+
+const Address = @import("../proto//types/address.zig").Address;
 const reqOne = @import("../proto/connection_request_one.zig");
 const repOne = @import("../proto/connection_reply_one.zig");
+const reqTwo = @import("../proto/connection_request_two.zig");
+const repTwo = @import("../proto/connection_reply_two.zig");
+const frameSet = @import("../proto/frameset.zig");
 
 pub const MAGIC: [16]u8 = [16]u8{
     0x00, 0xff, 0xff, 0x00, 0xfe, 0xfe, 0xfe, 0xfe,
@@ -17,24 +23,22 @@ pub const Client = struct {
     port: u16,
     mtu_size: u16 = 1492,
     guid: i64,
+    framer: ?Framer,
 
     pub fn init(host: []const u8, port: u16) !Client {
         const sock = try socket.Socket.init("0.0.0.0", 0);
-        var rng = std.rand.DefaultPrng.init(std.time.nanoTimestamp());
-        const random_generator = rng.random();
-
-        return Client{
-            .host = host,
-            .port = port,
-            .socket = sock,
-            .guid = random_generator.int(i64),
-        };
+        const result = @as(u64, @intCast(std.time.timestamp()));
+        var rng = std.rand.DefaultPrng.init(result);
+        var random = rng.random();
+        std.debug.print("Using custom GUID {any}", .{random.int(i64)});
+        return Client{ .host = host, .port = port, .socket = sock, .guid = random.int(i64), .framer = null };
     }
 
     pub fn connect(self: *Client) !void {
         try self.socket.bind();
         self.socket.log();
-        
+        self.framer = try Framer.init(self);
+
         const MessageHandler = struct {
             var client: ?*Client = null;
             pub fn handler(msg: []const u8) void {
@@ -45,10 +49,10 @@ pub const Client = struct {
                 }
             }
         };
-        
+
         MessageHandler.client = self;
         try self.socket.emitter.on("message", MessageHandler.handler);
-        
+
         if (!self.socket.isReady()) {
             return error.SocketNotReady;
         }
@@ -56,11 +60,28 @@ pub const Client = struct {
     }
 
     pub fn handleMessage(self: *Client, msg: []const u8) !void {
-        _ = self; // autofix
         std.debug.print("Received Packet {any}\n", .{msg[0]});
-        if(msg[0] == repOne.ID) {
-            const data = try repOne.OpenConnectionReplyOne.deserialize(msg);
-            std.debug.print("Received OpenConnectionReplyOne with guid {any} and mtu {any}\n", .{ data.guid, data.mtu_size });
+        switch (msg[0]) {
+            repOne.ID => {
+                const data = try repOne.OpenConnectionReplyOne.deserialize(msg);
+                std.debug.print("Received OpenConnectionReplyOne with\n - guid {any}\n - mtu {any}\n - security {any}\n", .{ data.guid, data.mtu_size, data.security });
+                const address = Address.init(self.host, self.port, 4);
+                var req = reqTwo.OpenConnectionRequestTwo.init(address, data.mtu_size, self.guid);
+                const ser = try req.serialize();
+                try self.send(ser);
+            },
+            repTwo.ID => {
+                const data = try repTwo.OpenConnectionReplyTwo.deserialize(msg);
+                std.debug.print("Received OpenConnectionReplyTwo with\n - address  \n  - version {any}\n  - address {any}\n  - port {any} \n - guid {any}\n - mtu {any}\n - enncryption {any}\n", .{ data.address.version, data.address.address, data.address.port, data.guid, data.mtu_size, data.encryption_enabled });
+                self.mtu_size = data.mtu_size;
+                try self.framer.?.sendConnection();
+            },
+            frameSet.ID => {
+                try self.framer.?.handleMessage(msg);
+            },
+            else => {
+                std.debug.print("Received Unknown Packet {any}\n", .{msg[0]});
+            },
         }
     }
 
