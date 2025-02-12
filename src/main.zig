@@ -7,7 +7,7 @@ pub fn main() !void {
     var client = try Cclient.Client.init("127.0.0.1", 19132);
     defer client.deinit();
     try client.connect();
-    std.debug.print("Test is running. Press Ctrl+C to exit.\n", .{});
+    // std.debug.print("Test is running. Press Ctrl+C to exit.\n", .{});
     while (true) {
         std.time.sleep(std.time.ns_per_s);
     }
