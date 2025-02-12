@@ -33,6 +33,10 @@ pub const BinaryStream = struct {
         };
     }
 
+    // pub fn getBinary():  {
+
+    // }
+
     pub fn read(self: *BinaryStream, length: i16) ![]const u8 {
         if (length < 0) {
             return StreamErrors.InvalidLength;
@@ -121,4 +125,67 @@ pub const BinaryStream = struct {
         try self.write(&bytes);
     }
 
+    pub fn getBytes(self: *BinaryStream) ![]const u8 {
+        return self.binary.items;
+    }
+
+    pub fn readU24(self: *BinaryStream, endianess: ?Endianess) !u32 {
+        const bytes = try self.read(3);
+        var temp: [4]u8 = undefined;
+        const end = endianess orelse .Big;
+        switch (end) {
+            .Little => {
+                temp[0] = bytes[0];
+                temp[1] = bytes[1];
+                temp[2] = bytes[2];
+                temp[3] = 0;
+            },
+            .Big => {
+                temp[0] = 0;
+                temp[1] = bytes[0];
+                temp[2] = bytes[1];
+                temp[3] = bytes[2];
+            },
+        }
+        const native_endian = switch (end) {
+            .Little => std.builtin.Endian.little,
+            .Big => std.builtin.Endian.big,
+        };
+        return std.mem.readInt(u32, &temp, native_endian);
+    }
+
+    pub fn writeU24(self: *BinaryStream, value: u32, endianess: ?Endianess) !void {
+        var bytes: [4]u8 = undefined;
+        const end = endianess orelse .Big;
+        const native_endian = switch (end) {
+            .Little => std.builtin.Endian.little,
+            .Big => std.builtin.Endian.big,
+        };
+        std.mem.writeInt(u32, &bytes, value, native_endian);
+        switch (end) {
+            .Big => try self.write(bytes[1..4]),
+            .Little => try self.write(bytes[0..3]),
+        }
+    }
+
+    pub fn readU32(self: *BinaryStream, endianess: ?Endianess) !u32 {
+        const bytes = try self.read(4);
+        const end = endianess orelse .Big;
+        const native_endian = switch (end) {
+            .Little => std.builtin.Endian.little,
+            .Big => std.builtin.Endian.big,
+        };
+        return std.mem.readInt(u32, bytes[0..4], native_endian);
+    }
+
+    pub fn writeU32(self: *BinaryStream,  value: u32, endianess: ?Endianess) !void {
+        var bytes: [4]u8 = undefined;
+        const end = endianess orelse .Big;
+        const native_endian = switch (end) {
+            .Little => std.builtin.Endian.little,
+            .Big => std.builtin.Endian.big,
+        };
+        std.mem.writeInt(u32, &bytes, value, native_endian);
+        try self.write(&bytes);
+    }
 };
