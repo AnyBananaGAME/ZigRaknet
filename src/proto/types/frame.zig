@@ -36,16 +36,72 @@ pub const Frame = struct {
         return self.split_size != null and self.split_size.? > 0;
     }
 
-    // pub fn read(stream: *binarystream.BinaryStream) !Frame {}
+    pub fn read(stream: *BinaryStream) !Frame {
+        const flags = try stream.readUint8();
+        const reliability = @as(Reliability, @enumFromInt((flags & 224) >> 5));
+        const length = try stream.readU16(.Big);
+        const payload_length = @divExact(length, 8);
+        const split = (flags & @intFromEnum(Flags.Split)) != 0;
+
+        var reliable_frame_index: ?u32 = null;
+        var sequence_frame_index: ?u32 = null;
+        var ordered_frame_index: ?u32 = null;
+        var order_channel: ?u8 = null;
+        var split_frame_index: ?u32 = null;
+        var split_id: ?u16 = null;
+        var split_size: ?u32 = null;
+
+        switch (reliability) {
+            .Reliable, .ReliableOrdered, .ReliableSequenced, .ReliableWithAckReceipt, .ReliableOrderedWithAckReceipt => {
+                reliable_frame_index = try stream.readU24(.Little);
+            },
+            else => {},
+        }
+
+        switch (reliability) {
+            .UnreliableSequenced, .ReliableSequenced => {
+                sequence_frame_index = try stream.readU24(.Little);
+            },
+            else => {},
+        }
+
+        switch (reliability) {
+            .ReliableOrdered, .ReliableOrderedWithAckReceipt => {
+                ordered_frame_index = try stream.readU24(.Little);
+                order_channel = try stream.readUint8();
+            },
+            else => {},
+        }
+
+        if (split) {
+            split_size = try stream.readU32(.Big);
+            split_id = try stream.readU16(.Big);
+            split_frame_index = try stream.readU32(.Big);
+        }
+
+        const payload = try stream.read(@intCast(payload_length));
+
+        return Frame.init(
+            reliable_frame_index,
+            sequence_frame_index,
+            ordered_frame_index,
+            order_channel,
+            reliability,
+            payload,
+            split_frame_index,
+            split_id,
+            split_size,
+        );
+    }
 
     pub fn write(self: *const Frame) ![]const u8 {
         var stream = try BinaryStream.init(null, 0);
-        const flags: u8 = (@as(u8, @intFromEnum(self.reliability)) << 5) |
+        const flags: u8 = ((@as(u8, @intFromEnum(self.reliability)) << 5) & 0xe0) |
             if (self.isSplit()) @intFromEnum(Flags.Split) else 0;
         try stream.writeUint8(flags);
-        std.debug.print("Split: {any}\n", .{self.isSplit()});
-        std.debug.print("flags: {any}\n", .{flags});
-        std.debug.print("reliability: {any}\n", .{self.reliability});
+        // std.debug.print("Split: {any}\n", .{self.isSplit()});
+        // std.debug.print("flags: {any}\n", .{flags});
+        // std.debug.print("reliability: {any}\n", .{self.reliability});
         // Length is in bits, so multiply by 8
         const length_in_bits = @as(u16, @intCast(self.payload.len)) * 8;
         try stream.writeU16(length_in_bits, .Big);
@@ -66,7 +122,6 @@ pub const Frame = struct {
             try stream.writeU32(self.split_frame_index.?, .Big);
         }
         try stream.write(self.payload);
-        std.debug.print("Frame bytes: {any}\n", .{try stream.getBytes()});
         return try stream.getBytes();
     }
 

@@ -17,21 +17,14 @@ pub const Socket = struct {
         errdefer std.posix.close(sock);
 
         const yes: i32 = 1;
-        _ = std.posix.setsockopt(
-            sock,
-            std.posix.SOL.SOCKET,
-            std.posix.SO.REUSEADDR,
-            std.mem.asBytes(&yes)
-        ) catch |err| {
+        _ = std.posix.setsockopt(sock, std.posix.SOL.SOCKET, std.posix.SO.REUSEADDR, std.mem.asBytes(&yes)) catch |err| {
             std.debug.print("Warning: Failed to set SO_REUSEADDR: {}\n", .{err});
         };
-
-        // For client sockets (port == 0), we still need to bind to a random port
         const bind_addr = if (port == 0)
             try std.net.Address.parseIp4("0.0.0.0", 0)
         else
             try std.net.Address.parseIp4(host, port);
-            
+
         try std.posix.bind(sock, &bind_addr.any, bind_addr.getOsSockLen());
 
         return Socket{
@@ -51,7 +44,6 @@ pub const Socket = struct {
         }
         self.running.store(true, .release);
         self.thread = try std.Thread.spawn(.{}, listen, .{self});
-        // Wait a small amount of time for the socket to be ready
         std.time.sleep(50 * std.time.ns_per_ms);
         self.ready.store(true, .release);
     }
@@ -89,19 +81,13 @@ pub const Socket = struct {
         }
         const target_addr = try std.net.Address.parseIp4(host, port);
 
-        std.debug.print("Sending {d} bytes to {s}:{d}\n", .{data.len, self.host, self.port});
-        const sent_bytes = try std.posix.sendto(
-            self.socket,
-            data,
-            0,
-            &target_addr.any,
-            target_addr.getOsSockLen()
-        );
+        // std.debug.print("Sending {d} bytes to {s}:{d}\n", .{data.len, self.host, self.port});
+        const sent_bytes = try std.posix.sendto(self.socket, data, 0, &target_addr.any, target_addr.getOsSockLen());
         if (sent_bytes != data.len) {
             std.debug.print("Incomplete write: sent {d} of {d} bytes\n", .{ sent_bytes, data.len });
             return error.IncompleteWrite;
         }
-        std.debug.print("Successfully sent {d} bytes\n", .{sent_bytes});
+        // std.debug.print("Successfully sent {d} bytes\n", .{sent_bytes});
     }
 
     pub fn deinit(self: *Socket) void {

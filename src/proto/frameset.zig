@@ -14,13 +14,25 @@ pub const FrameSet = struct {
     pub fn serialize(self: *FrameSet) ![]const u8 {
         var stream = try BinaryStream.init(null, 0);
         try stream.writeUint8(ID);
-        try stream.writeU24(self.sequence, .Big);
+        try stream.writeU24(self.sequence, .Little);
         // Write each frame.
         for (self.frames) |frame| {
             const frame_bytes = try frame.write();
             try stream.write(frame_bytes);
         }
-        std.debug.print("Frameset bytes: {any}\n", .{try stream.getBytes()});
+        // std.debug.print("Frameset bytes: {any}\n", .{try stream.getBytes()});
         return try stream.getBytes();
+    }
+
+    pub fn deserialize(bytes: []const u8) !FrameSet {
+        var stream = try BinaryStream.init(bytes, 0);
+        _ = try stream.readUint8(); // ID
+        const sequence = try stream.readU24(.Little);
+        var frames: std.ArrayList(Frame) = std.ArrayList(Frame).init(std.heap.page_allocator);
+        while (stream.offset < bytes.len) {
+            const frame = try Frame.read(&stream);
+            try frames.append(frame);
+        }
+        return FrameSet.init(sequence, frames.items);
     }
 };

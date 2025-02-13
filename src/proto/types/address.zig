@@ -18,9 +18,9 @@ pub const Address = struct {
         };
     }
 
-    pub fn write(self: *Address) ![]const u8 {
+    pub fn write(self: Address) ![]const u8 {
         var stream = try binarystream.BinaryStream.init(null, 0);
-
+        try stream.writeUint8(self.version);
         if (self.version == 4) {
             var parts = std.mem.tokenize(u8, self.address, ".");
             var part_count: usize = 0;
@@ -32,14 +32,13 @@ pub const Address = struct {
             if (part_count != 4) {
                 return AddressErrors.InvalidIPv4Address;
             }
-            try stream.writeU16(self.port, .Little);
+            try stream.writeU16(self.port, .Big);
         }
         return stream.getBytes();
     }
 
     pub fn read(stream: *binarystream.BinaryStream) !Address {
         const version = try stream.readUint8();
-
         if (version == 4) {
             var address_parts: [4]u8 = undefined;
 
@@ -54,7 +53,7 @@ pub const Address = struct {
                 .{ address_parts[0], address_parts[1], address_parts[2], address_parts[3] },
             );
 
-            const port = try stream.readU16(.Little);
+            const port = try stream.readU16(.Big);
             return Address.init(address, port, version);
         }
         return AddressErrors.InvalidIPv4Address;
