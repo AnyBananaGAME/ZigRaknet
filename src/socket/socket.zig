@@ -51,8 +51,8 @@ const MessageQueue = struct {
 
 const BufferPool = struct {
     const Buffer = []u8;
-    const BUFFER_SIZE = 2048; // Optimized for typical UDP packet size
-    const POOL_SIZE = 32; // Number of pre-allocated buffers
+    const BUFFER_SIZE = 2048; 
+    const POOL_SIZE = 32;
 
     allocator: std.mem.Allocator,
     available: std.ArrayList(Buffer),
