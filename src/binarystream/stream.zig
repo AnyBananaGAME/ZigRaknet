@@ -5,10 +5,7 @@ pub const Endianess = enum {
     Big,
 };
 
-pub const StreamErrors = error{
-    InvalidLength,
-    OutOfBounds
-};
+pub const StreamErrors = error{ InvalidLength, OutOfBounds };
 
 pub const BinaryStream = struct {
     offset: i16,
@@ -41,7 +38,7 @@ pub const BinaryStream = struct {
         if (length < 0) {
             return StreamErrors.InvalidLength;
         }
-        if(self.offset + length > self.binary.items.len) {
+        if (self.offset + length > self.binary.items.len) {
             return StreamErrors.OutOfBounds;
         }
         const start = @as(usize, @intCast(self.offset));
@@ -75,13 +72,13 @@ pub const BinaryStream = struct {
     }
 
     pub fn writeBool(self: *BinaryStream, value: bool) !void {
-        if(value) {
+        if (value) {
             try self.writeUint8(1);
         } else {
             try self.writeUint8(0);
         }
     }
-   
+
     pub fn readI64(self: *BinaryStream, endianess: ?Endianess) !i64 {
         const bytes = try self.read(8);
         const end = endianess orelse .Big;
@@ -102,7 +99,6 @@ pub const BinaryStream = struct {
         std.mem.writeInt(u64, &bytes, @as(u64, @bitCast(value)), native_endian);
         try self.write(bytes[0..8]);
     }
-
 
     pub fn readU16(self: *BinaryStream, endianess: ?Endianess) !u16 {
         const bytes = try self.read(2);
@@ -178,7 +174,7 @@ pub const BinaryStream = struct {
         return std.mem.readInt(u32, bytes[0..4], native_endian);
     }
 
-    pub fn writeU32(self: *BinaryStream,  value: u32, endianess: ?Endianess) !void {
+    pub fn writeU32(self: *BinaryStream, value: u32, endianess: ?Endianess) !void {
         var bytes: [4]u8 = undefined;
         const end = endianess orelse .Big;
         const native_endian = switch (end) {
@@ -187,5 +183,10 @@ pub const BinaryStream = struct {
         };
         std.mem.writeInt(u32, &bytes, value, native_endian);
         try self.write(&bytes);
+    }
+
+    pub fn reset(self: *BinaryStream) void {
+        self.binary = std.ArrayList(u8).init(std.heap.page_allocator);
+        self.offset = 0;
     }
 };
