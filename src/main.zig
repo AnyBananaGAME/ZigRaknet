@@ -8,7 +8,7 @@ pub fn main() !void {
     defer client.deinit();
     try client.connect();
     while (true) {
-        std.time.sleep(std.time.ns_per_s);
+        std.time.sleep(250 * std.time.ns_per_ms);
     }
 }
 
