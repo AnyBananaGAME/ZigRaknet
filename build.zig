@@ -14,7 +14,7 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
-    const lib = b.addStaticLibrary(.{
+    const lib = b.addSharedLibrary(.{
         .name = "ZigRaknet",
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
@@ -24,10 +24,26 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
 
+    // Define Node-API version
+    lib.defineCMacro("NAPI_VERSION", "8");
+
+    // Link against node.lib
+    if (target.result.os.tag == .windows) {
+        lib.addObjectFile(b.path("deps/node.lib"));
+    }
+
+    lib.linker_allow_shlib_undefined = true;
+    const napigen = b.createModule(.{
+        .root_source_file = b.path("deps/napigen/napigen.zig"),
+    });
+    lib.root_module.addImport("napigen", napigen);
+
     // This declares intent for the library to be installed into the standard
     // location when the user invokes the "install" step (the default step when
     // running `zig build`).
     b.installArtifact(lib);
+    const copy_node_step = b.addInstallLibFile(lib.getEmittedBin(), "example.node");
+    b.getInstallStep().dependOn(&copy_node_step.step);
 
     const exe = b.addExecutable(.{ .name = "ZigRaknet", .root_source_file = b.path("src/main.zig"), .target = target, .optimize = optimize, .link_libc = true });
     // This declares intent for the executable to be installed into the
