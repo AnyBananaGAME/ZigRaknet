@@ -9,6 +9,7 @@ const repOne = @import("../proto/connection_reply_one.zig");
 const reqTwo = @import("../proto/connection_request_two.zig");
 const repTwo = @import("../proto/connection_reply_two.zig");
 const frameSet = @import("../proto/frameset.zig");
+const Ack = @import("../proto/ack.zig");
 
 pub const MAGIC: [16]u8 = [16]u8{
     0x00, 0xff, 0xff, 0x00, 0xfe, 0xfe, 0xfe, 0xfe,
@@ -35,6 +36,11 @@ pub const Client = struct {
         return Client{ .host = host, .conTime = undefined, .debug = false, .port = port, .socket = sock, .guid = random.int(i64), .framer = null };
     }
 
+    pub fn tick(self: *Client) !void {
+        if (self.framer == null) return;
+        try self.framer.?.tick();
+    }
+
     pub fn connect(self: *Client) !void {
         try self.socket.bind();
         // self.socket.log();
@@ -47,7 +53,6 @@ pub const Client = struct {
             pub fn handler(msg: []const u8) void {
                 if (client) |c| {
                     c.handleMessage(msg) catch |err| {
-                        // no need for debug.
                         std.debug.print("Error handling message: {any}\n", .{err});
                     };
                 }
@@ -86,6 +91,9 @@ pub const Client = struct {
             },
             frameSet.ID => {
                 try self.framer.?.handleMessage(msg);
+            },
+            Ack.ID => {
+                try self.framer.?.onAck(try Ack.Ack.deserialize(msg));
             },
             else => {
                 std.debug.print("Received Unknown Packet {any}\n", .{msg[0]});
