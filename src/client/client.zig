@@ -68,7 +68,11 @@ pub const Client = struct {
         switch (msg[0]) {
             repOne.ID => {
                 const data = try repOne.OpenConnectionReplyOne.deserialize(msg);
-                if (self.debug) std.debug.print("Received OpenConnectionReplyOne with\n - guid {any}\n - mtu {any}\n - security {any}\n", .{ data.guid, data.mtu_size, data.security });
+                if (!self.debug) std.debug.print("Received OpenConnectionReplyOne with\n - guid {any}\n - mtu {any}\n - security {any}\n", .{ data.guid, data.mtu_size, data.security });
+                if (data.mtu_size < 500 or data.mtu_size > 1500) {
+                    try self.sendRequest();
+                    return;
+                }
                 const address = Address.init(self.host, self.port, 4);
                 var req = reqTwo.OpenConnectionRequestTwo.init(address, data.mtu_size, self.guid);
                 const ser = try req.serialize();
