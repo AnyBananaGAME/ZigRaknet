@@ -55,6 +55,7 @@ pub const Framer = struct {
     outputsplitIndex: u32 = 0,
     outputSequence: u32 = 0,
     outputFrames: std.ArrayList(Frame),
+    currentQueueLength: usize = 0,
     receivedFrameSequences: std.AutoHashMap(u32, void),
     lostFrameSequences: std.AutoHashMap(u32, void),
     lastInputSequence: i32 = -1,
@@ -62,9 +63,12 @@ pub const Framer = struct {
     inputHighestSequenceIndex: [32]u32,
     inputOrderingQueue: OrderingQueue,
     allocator: std.mem.Allocator,
+    split_buffer: BinaryStream,
 
     pub fn init(client: *Client) !Framer {
         const allocator = std.heap.page_allocator;
+        const split_buffer = try BinaryStream.init(null, 0);
+
         return Framer{
             .client = client,
             .outputOrderIndex = [_]u32{0} ** 32,
@@ -81,6 +85,8 @@ pub const Framer = struct {
             .inputOrderingQueue = OrderingQueue.init(allocator),
             .lastInputSequence = -1,
             .allocator = allocator,
+            .currentQueueLength = 0,
+            .split_buffer = split_buffer,
         };
     }
 
@@ -213,17 +219,17 @@ pub const Framer = struct {
 
             if (fragment_map.count() == frame.split_size.?) {
                 if (self.client.debug) std.debug.print("Complete split frame received\n", .{});
-                var stream = try BinaryStream.init(null, 0);
+                self.split_buffer.reset();
                 var i: u32 = 0;
                 while (i < frame.split_size.?) : (i += 1) {
                     if (fragment_map.get(i)) |sframe| {
-                        try stream.write(sframe.payload);
+                        try self.split_buffer.write(sframe.payload);
                     } else {
-                        std.debug.print("Missing fragment at index {d}\n", .{i});
+                        if (self.client.debug) std.debug.print("Missing fragment at index {d}\n", .{i});
                         return FramerError.MissingFragment;
                     }
                 }
-                const nFrame = Frame.init(frame.reliable_frame_index, frame.sequence_frame_index, frame.ordered_frame_index, frame.order_channel, frame.reliability, try stream.getBytes(), null, null, null);
+                const nFrame = Frame.init(frame.reliable_frame_index, frame.sequence_frame_index, frame.ordered_frame_index, frame.order_channel, frame.reliability, try self.split_buffer.getBytes(), null, null, null);
                 _ = self.fragmentsQueue.remove(frame.split_id.?);
                 try self.handleFrame(nFrame);
             }
@@ -300,15 +306,15 @@ pub const Framer = struct {
 
     pub fn queueFrame(self: *Framer, frame: *Frame, priority: ?Priority) !void {
         const pr = priority orelse Priority.Medium;
-        var length: usize = 0;
-        for (self.outputFrames.items) |f| {
-            std.debug.print("Frame: {any}\n", .{f});
-            length += f.getByteLength();
-        }
-        if (length + frame.getByteLength() > self.client.mtu_size - 36) {
+        const frame_length = frame.getByteLength();
+
+        if (self.currentQueueLength + frame_length > self.client.mtu_size - 36) {
             try self.sendQueue(@as(u32, @intCast(self.outputFrames.items.len)));
         }
+
         try self.outputFrames.append(frame.*);
+        self.currentQueueLength += frame_length;
+
         if (pr == Priority.High) {
             try self.sendQueue(1);
         }
@@ -321,6 +327,13 @@ pub const Framer = struct {
         var frameset = FrameSet.init(outputSeq, self.outputFrames.items[0..@as(usize, count)]);
         const serialized = try frameset.serialize();
         try self.client.send(serialized);
+
+        var removed_length: usize = 0;
+        for (self.outputFrames.items[0..@as(usize, count)]) |f| {
+            removed_length += f.getByteLength();
+        }
+        self.currentQueueLength -= removed_length;
+
         self.outputFrames.items = self.outputFrames.items[@as(usize, count)..];
     }
 };
