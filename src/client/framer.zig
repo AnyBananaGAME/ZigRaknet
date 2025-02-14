@@ -9,6 +9,8 @@ const StreamErrors = @import("../binarystream/stream.zig").StreamErrors;
 const ConnectionRequest = @import("../proto/connection_request.zig").ConnectionRequest;
 const ConnectionRequestAccepted = @import("../proto/connection_request_acceptes.zig").ConnectionRequestAccepted;
 const NewIncommingConnection = @import("../proto/new-incomming-connection.zig").NewIncommingConnection;
+const Ack = @import("../proto/ack.zig").Ack;
+const ConnectedPing = @import("../proto/connected_ping.zig");
 
 pub const Priority = enum(u8) { Medium, High };
 const FragmentMap = std.AutoHashMap(u32, Frame);
@@ -55,6 +57,7 @@ pub const Framer = struct {
     outputsplitIndex: u32 = 0,
     outputSequence: u32 = 0,
     outputFrames: std.ArrayList(Frame),
+    output_backup: std.AutoHashMap(u32, []const Frame),
     currentQueueLength: usize = 0,
     receivedFrameSequences: std.AutoHashMap(u32, void),
     lostFrameSequences: std.AutoHashMap(u32, void),
@@ -64,6 +67,7 @@ pub const Framer = struct {
     inputOrderingQueue: OrderingQueue,
     allocator: std.mem.Allocator,
     split_buffer: BinaryStream,
+    tickCount: u32 = 0,
 
     pub fn init(client: *Client) !Framer {
         const allocator = std.heap.page_allocator;
@@ -78,6 +82,7 @@ pub const Framer = struct {
             .receivedFrameSequences = std.AutoHashMap(u32, void).init(allocator),
             .lostFrameSequences = std.AutoHashMap(u32, void).init(allocator),
             .fragmentsQueue = std.AutoHashMap(u16, FragmentMap).init(allocator),
+            .output_backup = std.AutoHashMap(u32, []const Frame).init(allocator),
             .outputReliableIndex = 0,
             .outputsplitIndex = 0,
             .outputSequence = 0,
@@ -87,6 +92,7 @@ pub const Framer = struct {
             .allocator = allocator,
             .currentQueueLength = 0,
             .split_buffer = split_buffer,
+            .tickCount = 0,
         };
     }
 
@@ -119,6 +125,48 @@ pub const Framer = struct {
             else => {
                 if (self.client.debug) std.debug.print("\n\nIncoming batch Unknown packet: {any}\n\n", .{msg[0]});
             },
+        }
+    }
+
+    pub fn tick(self: *Framer) !void {
+        self.tickCount += 1;
+        const size = self.receivedFrameSequences.count();
+        var sequences = try std.ArrayList(u32).initCapacity(self.allocator, size);
+        defer sequences.deinit();
+
+        if (self.tickCount % 50 == 0) {
+            var ping = ConnectedPing.ConnectedPing.init();
+            const serialized = try ping.serialize();
+            var frame = frameIn(serialized);
+            try self.sendFrame(&frame);
+        }
+
+        if (size > 0) {
+            var sequences2 = try std.ArrayList(u32).initCapacity(self.allocator, size);
+            defer sequences2.deinit();
+
+            var it = self.receivedFrameSequences.keyIterator();
+            while (it.next()) |key| {
+                try sequences2.append(key.*);
+                try sequences.append(key.*);
+            }
+
+            var ack = try Ack.init(sequences2.items);
+            self.receivedFrameSequences.clearAndFree();
+            const serialized = try ack.serialize();
+            std.debug.print("Sending Ack {any}\n", .{1});
+            try self.client.send(serialized);
+        }
+    }
+
+    pub fn onAck(self: *Framer, ack: Ack) !void {
+        std.debug.print("Received Ack {any}\n", .{1});
+        const sequences = ack.sequences;
+        for (sequences) |seq| {
+            if (self.output_backup.get(seq)) |frames| {
+                self.allocator.free(frames);
+            }
+            _ = self.output_backup.remove(seq);
         }
     }
 
@@ -322,11 +370,13 @@ pub const Framer = struct {
 
     pub fn sendQueue(self: *Framer, count: u32) !void {
         if (count <= 0) return;
-        self.outputSequence += 1;
         const outputSeq = self.outputSequence;
         var frameset = FrameSet.init(outputSeq, self.outputFrames.items[0..@as(usize, count)]);
+        const frames_copy = try self.allocator.dupe(Frame, frameset.frames);
+        try self.output_backup.put(self.outputSequence, frames_copy);
         const serialized = try frameset.serialize();
         try self.client.send(serialized);
+        self.outputSequence += 1;
 
         var removed_length: usize = 0;
         for (self.outputFrames.items[0..@as(usize, count)]) |f| {
@@ -334,6 +384,9 @@ pub const Framer = struct {
         }
         self.currentQueueLength -= removed_length;
 
-        self.outputFrames.items = self.outputFrames.items[@as(usize, count)..];
+        var remaining = try std.ArrayList(Frame).initCapacity(self.allocator, self.outputFrames.items.len - count);
+        try remaining.appendSlice(self.outputFrames.items[@as(usize, count)..]);
+        self.outputFrames.deinit();
+        self.outputFrames = remaining;
     }
 };
