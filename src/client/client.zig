@@ -27,13 +27,14 @@ pub const Client = struct {
     framer: ?Framer,
     debug: bool = false,
     conTime: i64,
+    connected: bool = false,
 
     pub fn init(host: []const u8, port: u16) !Client {
         const sock = try socket.Socket.init("0.0.0.0", 0);
         const result = @as(u64, @intCast(std.time.timestamp()));
         var rng = std.rand.DefaultPrng.init(result);
         var random = rng.random();
-        return Client{ .host = host, .conTime = undefined, .debug = false, .port = port, .socket = sock, .guid = random.int(i64), .framer = null };
+        return Client{ .host = host, .connected = false, .conTime = undefined, .debug = false, .port = port, .socket = sock, .guid = random.int(i64), .framer = null };
     }
 
     pub fn tick(self: *Client) !void {

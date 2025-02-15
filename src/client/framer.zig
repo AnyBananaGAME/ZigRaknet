@@ -114,6 +114,7 @@ pub const Framer = struct {
                 const serialized = try packet.serialize();
                 var frame = frameIn(serialized);
                 try self.sendFrame(&frame);
+                self.client.connected = true;
                 const end = std.time.milliTimestamp() - self.client.conTime;
                 std.debug.print("\n\nConnection time: {d}ms\n", .{end});
                 std.debug.print("Client Con Time {d}\n", .{self.client.conTime});
