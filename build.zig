@@ -34,7 +34,7 @@ pub fn build(b: *std.Build) void {
 
     lib.linker_allow_shlib_undefined = true;
     const napigen = b.createModule(.{
-        .root_source_file = b.path("deps/napigen/napigen.zig"),
+        .root_source_file = b.path("deps/napi/napigen.zig"),
     });
     lib.root_module.addImport("napigen", napigen);
 
