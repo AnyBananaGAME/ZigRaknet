@@ -3,3 +3,5 @@ zig-out
 .zig-cache
 
 build.zig.zon
+
+Test/

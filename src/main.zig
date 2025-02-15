@@ -4,8 +4,8 @@ const Cclient = @import("./client/client.zig");
 
 pub fn main() !void {
     std.debug.print("Starting Client...\n", .{});
-    var client = try Cclient.Client.init("127.0.0.1", 19132);
-    // var client = try Cclient.Client.init("135.148.137.229", 19132);
+    // var client = try Cclient.Client.init("127.0.0.1", 19132);
+    var client = try Cclient.Client.init("135.148.137.229", 19132);
     defer client.deinit();
     try client.connect();
     while (true) {
