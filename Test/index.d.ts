@@ -1,7 +1,6 @@
 export declare class Client {
     private constructor();
 }
-
 export declare class zigraknet {
     /**
      * Creates a new RakNet client instance
