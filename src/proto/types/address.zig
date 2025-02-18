@@ -34,6 +34,7 @@ pub const Address = struct {
             }
             try stream.writeU16(self.port, .Big);
         }
+        // TODO: Implement IPv6
         return stream.getBytes();
     }
 
@@ -56,6 +57,7 @@ pub const Address = struct {
             const port = try stream.readU16(.Big);
             return Address.init(address, port, version);
         }
+        // TODO: Implement IPv6
         return AddressErrors.InvalidIPv4Address;
     }
 };

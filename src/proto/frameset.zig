@@ -15,12 +15,10 @@ pub const FrameSet = struct {
         var stream = try BinaryStream.init(null, 0);
         try stream.writeUint8(ID);
         try stream.writeU24(self.sequence, .Little);
-        // Write each frame.
         for (self.frames) |frame| {
             const frame_bytes = try frame.write();
             try stream.write(frame_bytes);
         }
-        // std.debug.print("Frameset bytes: {any}\n", .{try stream.getBytes()});
         return try stream.getBytes();
     }
 
