@@ -1,4 +1,4 @@
-# Zig RakNet
+# ZNET - Raknet in Zig.
 
 A simple and easy to use RakNet implementation in Zig.
 
@@ -49,3 +49,6 @@ setInterval(() => {
     console.log('Is connected:', native.isConnected(client));
 }, 1000);
 ```
+
+## Credits
+- Thanks to a user on Discord (akashic_records_of_the_abyss) for the name suggestion.
