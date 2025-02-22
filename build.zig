@@ -5,7 +5,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const lib = b.addSharedLibrary(.{
-        .name = "ZigRaknet",
+        .name = "ZNET",
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
@@ -28,7 +28,7 @@ pub fn build(b: *std.Build) void {
     const copy_node_step = b.addInstallLibFile(lib.getEmittedBin(), "example.node");
     b.getInstallStep().dependOn(&copy_node_step.step);
 
-    const exe = b.addExecutable(.{ .name = "ZigRaknet", .root_source_file = b.path("src/main.zig"), .target = target, .optimize = optimize, .link_libc = true });
+    const exe = b.addExecutable(.{ .name = "ZNET", .root_source_file = b.path("src/main.zig"), .target = target, .optimize = optimize, .link_libc = true });
     b.installArtifact(exe);
     exe.linkLibC();
 

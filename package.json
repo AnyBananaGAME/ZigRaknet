@@ -1,5 +1,5 @@
 {
-  "name": "zigraknet",
+  "name": "znet",
   "version": "0.0.1",
   "description": "RakNet implementation in Zig with Node.js bindings",
   "main": "zig-out/lib/example.node",
@@ -11,7 +11,8 @@
   "keywords": [
     "raknet",
     "zig",
-    "networking"
+    "networking",
+    "znet"
   ],
   "author": "",
   "license": "Apache-2.0",

@@ -20,7 +20,7 @@ pub const OpenConnectionReplyTwo = struct {
     pub fn deserialize(data: []const u8) !OpenConnectionReplyTwo {
         var stream = try binarystream.BinaryStream.init(data, 0);
         _ = try stream.readUint8(); // ID
-        _ = try stream.read(16); // Magic
+        _ = try stream.skip(16); // Magic
         const guid = try stream.readI64(binarystream.Endianess.Big);
         const address = try Address.read(&stream);
         const mtu_size = try stream.readU16(binarystream.Endianess.Big);

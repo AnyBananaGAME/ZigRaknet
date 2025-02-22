@@ -30,10 +30,6 @@ pub const BinaryStream = struct {
         };
     }
 
-    // pub fn getBinary():  {
-
-    // }
-
     pub fn read(self: *BinaryStream, length: i16) ![]const u8 {
         if (length < 0) {
             return StreamErrors.InvalidLength;
@@ -185,8 +181,24 @@ pub const BinaryStream = struct {
         try self.write(&bytes);
     }
 
+    pub fn readString16(self: *BinaryStream, endian: ?Endianess) ![]const u8 {
+        const end = endian orelse .Big;
+        const length = try self.readU16(end);
+        const raw_data = try self.read(@as(i16, @intCast(length)));
+        return raw_data;
+    }
+
+    pub fn writeString16(self: *BinaryStream, data: []const u8, endian: Endianess) !void {
+        try self.writeU16(@as(u16, @intCast(data.len)), endian);
+        try self.write(data);
+    }
+
     pub fn reset(self: *BinaryStream) void {
         self.binary = std.ArrayList(u8).init(std.heap.page_allocator);
         self.offset = 0;
+    }
+
+    pub fn skip(self: *BinaryStream, length: i16) !void {
+        self.offset += length;
     }
 };

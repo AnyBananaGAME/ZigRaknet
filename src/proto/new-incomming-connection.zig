@@ -22,7 +22,6 @@ pub const NewIncommingConnection = struct {
         var stream = try BinaryStream.init(null, 0);
         try stream.writeUint8(ID);
         try stream.write(try self.server_address.write());
-        std.debug.print("\n\nServer Address {any}\n", .{self.server_address});
 
         for (&self.internal_addresses) |addr| {
             const internal_addr = try addr.write();
