@@ -16,4 +16,11 @@ pub const ConnectedPing = struct {
         try stream.writeI64(self.timestamp, .Big);
         return try stream.getBytes();
     }
+
+    pub fn deserialize(msg: []const u8) !ConnectedPing {
+        var stream = try BinaryStream.init(msg, 0);
+        _ = try stream.readUint8();
+        const timestamp = try stream.readI64(.Big);
+        return ConnectedPing{ .timestamp = timestamp };
+    }
 };

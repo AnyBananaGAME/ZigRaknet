@@ -11,8 +11,17 @@ pub const Address = struct {
     version: u8,
 
     pub fn init(address: []const u8, port: u16, version: u8) Address {
+        const addr_copy = std.heap.page_allocator.alloc(u8, address.len) catch |err| {
+            std.debug.print("Failed to allocate memory for address: {any}\n", .{err});
+            return Address{
+                .address = address,
+                .port = port,
+                .version = version,
+            };
+        };
+        @memcpy(addr_copy, address);
         return Address{
-            .address = address,
+            .address = addr_copy,
             .port = port,
             .version = version,
         };
@@ -30,6 +39,7 @@ pub const Address = struct {
                 try stream.writeUint8((~b) & 0xff);
             }
             if (part_count != 4) {
+                std.debug.print("Invalid IPv4 address: {s} (parts: {d})\n", .{ self.address, part_count });
                 return AddressErrors.InvalidIPv4Address;
             }
             try stream.writeU16(self.port, .Big);
@@ -59,5 +69,9 @@ pub const Address = struct {
         }
         // TODO: Implement IPv6
         return AddressErrors.InvalidIPv4Address;
+    }
+
+    pub fn deinit(self: *const Address) void {
+        std.heap.page_allocator.free(self.address);
     }
 };

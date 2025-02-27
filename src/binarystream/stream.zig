@@ -5,7 +5,7 @@ pub const Endianess = enum {
     Big,
 };
 
-pub const StreamErrors = error{ InvalidLength, OutOfBounds };
+pub const StreamErrors = error{ InvalidLength, OutOfBounds, VarIntTooBig };
 
 pub const BinaryStream = struct {
     offset: i16,
@@ -200,5 +200,37 @@ pub const BinaryStream = struct {
 
     pub fn skip(self: *BinaryStream, length: i16) !void {
         self.offset += length;
+    }
+
+    pub fn readVarInt(self: *BinaryStream) !u32 {
+        var value: u32 = 0;
+        var size: u32 = 0;
+        while (true) {
+            const byte = try self.readUint8();
+            value |= @as(u32, byte & 0x7F) << @intCast(size * 7);
+            size += 1;
+            if (size > 5) {
+                return StreamErrors.VarIntTooBig;
+            }
+            if ((byte & 0x80) != 0x80) {
+                break;
+            }
+        }
+        return value;
+    }
+
+    pub fn writeVarInt(self: *BinaryStream, value_in: u32) !void {
+        var value = value_in;
+        while (true) {
+            var byte: u8 = @intCast(value & 0x7F);
+            value >>= 7;
+            if (value != 0) {
+                byte |= 0x80;
+            }
+            try self.writeUint8(byte);
+            if (value == 0) {
+                break;
+            }
+        }
     }
 };

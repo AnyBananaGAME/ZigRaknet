@@ -6,7 +6,9 @@ const MAX_EVENT_NAME_LEN = 32;
 const EventListener = struct {
     name: []const u8,
     once: bool,
-    cb: *const fn (message: []const u8) void,
+    context: ?*anyopaque,
+    cb: *const fn (ctx: *const anyopaque, message: []const u8) void,
+    cleanup: ?*const fn (ctx: *anyopaque) void,
 };
 
 pub const EventEmitter = struct {
@@ -14,6 +16,7 @@ pub const EventEmitter = struct {
     listeners: [MAX_LISTENERS]?EventListener,
     count: usize,
     mutex: std.Thread.Mutex,
+    debug: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) EventEmitter {
         return EventEmitter{
@@ -21,6 +24,7 @@ pub const EventEmitter = struct {
             .listeners = [_]?EventListener{null} ** MAX_LISTENERS,
             .count = 0,
             .mutex = std.Thread.Mutex{},
+            .debug = false,
         };
     }
 
@@ -30,6 +34,7 @@ pub const EventEmitter = struct {
             .listeners = [_]?EventListener{null} ** MAX_LISTENERS,
             .count = 0,
             .mutex = std.Thread.Mutex{},
+            .debug = false,
         };
     }
 
@@ -37,12 +42,17 @@ pub const EventEmitter = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
+        if (self.debug) std.debug.print("Emitting event: {s} with message length: {d}\n", .{event, msg.len});
         var i: usize = 0;
         while (i < self.count) : (i += 1) {
             if (self.listeners[i]) |*listener| {
                 if (eql(listener.name, event)) {
-                    listener.cb(msg);
+                    if (self.debug) std.debug.print("Found matching listener for event: {s}\n", .{event});
+                    listener.cb(listener.context orelse undefined, msg);
                     if (listener.once) {
+                        if (listener.cleanup) |cleanup| {
+                            cleanup(listener.context.?);
+                        }
                         if (i < self.count - 1) {
                             self.listeners[i] = self.listeners[self.count - 1];
                         }
@@ -53,27 +63,32 @@ pub const EventEmitter = struct {
                 }
             }
         }
+        if (self.debug) std.debug.print("Finished emitting event: {s}\n", .{event});
     }
 
     pub fn on(self: *EventEmitter, event: []const u8, comptime cb: anytype) !void {
         const Closure = struct {
-            pub fn wrap(msg: []const u8) void {
+            pub fn wrap(_: *const anyopaque, msg: []const u8) void {
                 cb(msg);
             }
         };
-        try self.addListener(event, &Closure.wrap, false);
+        try self.addListener(event, null, &Closure.wrap, null, false);
+    }
+
+    pub fn onWithContext(self: *EventEmitter, event: []const u8, context: *anyopaque, cb: *const fn (ctx: *const anyopaque, msg: []const u8) void, cleanup: ?*const fn (ctx: *anyopaque) void) !void {
+        try self.addListener(event, context, cb, cleanup, false);
     }
 
     pub fn once(self: *EventEmitter, event: []const u8, comptime cb: anytype) !void {
         const Closure = struct {
-            pub fn wrap(msg: []const u8) void {
+            pub fn wrap(_: *const anyopaque, msg: []const u8) void {
                 cb(msg);
             }
         };
-        try self.addListener(event, &Closure.wrap, true);
+        try self.addListener(event, null, &Closure.wrap, null, true);
     }
 
-    fn addListener(self: *EventEmitter, event: []const u8, cb: *const fn (message: []const u8) void, is_once: bool) !void {
+    fn addListener(self: *EventEmitter, event: []const u8, context: ?*anyopaque, cb: *const fn (ctx: *const anyopaque, msg: []const u8) void, cleanup: ?*const fn (ctx: *anyopaque) void, is_once: bool) !void {
         if (event.len > MAX_EVENT_NAME_LEN) {
             return error.EventNameTooLong;
         }
@@ -90,6 +105,8 @@ pub const EventEmitter = struct {
                 self.listeners[i] = EventListener{
                     .name = event,
                     .cb = cb,
+                    .context = context,
+                    .cleanup = cleanup,
                     .once = is_once,
                 };
                 self.count += 1;
@@ -98,7 +115,7 @@ pub const EventEmitter = struct {
         }
     }
 
-    pub fn removeListener(self: *EventEmitter, event: []const u8, cb: *const fn (message: []const u8) void) void {
+    pub fn removeListener(self: *EventEmitter, event: []const u8, cb: *const fn (ctx: *const anyopaque, msg: []const u8) void) void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
@@ -106,6 +123,9 @@ pub const EventEmitter = struct {
         while (i < self.count) : (i += 1) {
             if (self.listeners[i]) |listener| {
                 if (eql(listener.name, event) and listener.cb == cb) {
+                    if (listener.cleanup) |cleanup| {
+                        cleanup(listener.context.?);
+                    }
                     if (i < self.count - 1) {
                         self.listeners[i] = self.listeners[self.count - 1];
                     }
@@ -126,6 +146,9 @@ pub const EventEmitter = struct {
             while (i < self.count) {
                 if (self.listeners[i]) |listener| {
                     if (eql(listener.name, e)) {
+                        if (listener.cleanup) |cleanup| {
+                            cleanup(listener.context.?);
+                        }
                         if (i < self.count - 1) {
                             self.listeners[i] = self.listeners[self.count - 1];
                         }
@@ -138,6 +161,11 @@ pub const EventEmitter = struct {
             }
         } else {
             for (self.listeners[0..self.count]) |*listener| {
+                if (listener.*) |l| {
+                    if (l.cleanup) |cleanup| {
+                        cleanup(l.context.?);
+                    }
+                }
                 listener.* = null;
             }
             self.count = 0;
