@@ -3,6 +3,7 @@ const std = @import("std");
 const stream = @import("../binarystream/stream.zig");
 const Framer = @import("./framer.zig").Framer;
 const Emitter = @import("../events/event.zig").EventEmitter;
+const ServerInfo = @import("../proto/server_info.zig");
 
 const Address = @import("../proto/types/address.zig").Address;
 const reqOne = @import("../proto/connection_request_one.zig");
@@ -13,6 +14,7 @@ const frameSet = @import("../proto/frameset.zig");
 const Ack = @import("../proto/ack.zig");
 const UnconnectedPing = @import("../proto/unconnected_ping.zig").UnconnectedPing;
 const UnconnectedPong = @import("../proto/unconnected_pong.zig");
+const ConnectedPong = @import("../proto/connected_pong.zig");
 
 pub const MAGIC: [16]u8 = [16]u8{
     0x00, 0xff, 0xff, 0x00, 0xfe, 0xfe, 0xfe, 0xfe,
@@ -20,6 +22,11 @@ pub const MAGIC: [16]u8 = [16]u8{
 };
 pub const UDP_HEADER_SIZE: u16 = 28;
 pub const MTU_SIZES = [_]u16{ 1492, 1200, 576 };
+
+pub const ClientError = error{
+    SocketNotReady,
+    ConnectionTimeout,
+} || std.mem.Allocator.Error;
 
 pub const Client = struct {
     socket: socket.Socket,
@@ -35,15 +42,20 @@ pub const Client = struct {
     emitter: Emitter,
 
     pub fn init(host: []const u8, port: u16) !Client {
+        const allocator = std.heap.page_allocator;
+        const host_copy = try allocator.alloc(u8, host.len);
+        @memcpy(host_copy, host);
+
         const sock = try socket.Socket.init("0.0.0.0", 0);
         const result = @as(u64, @intCast(std.time.timestamp()));
         var rng = std.rand.DefaultPrng.init(result);
         var random = rng.random();
-        var buffer_pool = std.ArrayList([]u8).init(std.heap.page_allocator);
-        try buffer_pool.append(try std.heap.page_allocator.alloc(u8, 1500));
-        try buffer_pool.append(try std.heap.page_allocator.alloc(u8, 576));
+        var buffer_pool = std.ArrayList([]u8).init(allocator);
+        try buffer_pool.append(try allocator.alloc(u8, 1500));
+        try buffer_pool.append(try allocator.alloc(u8, 576));
+        const emitter = Emitter.init(allocator);
         return Client{ 
-            .host = host, 
+            .host = host_copy, 
             .connected = false, 
             .conTime = undefined, 
             .debug = false, 
@@ -52,8 +64,16 @@ pub const Client = struct {
             .guid = random.int(i64), 
             .framer = null,
             .buffer_pool = buffer_pool,
-            .emitter = Emitter.init(std.heap.page_allocator),
+            .emitter = emitter,
         };
+    }
+
+    pub fn setDebug(self: *Client, value: bool) void {
+        self.debug = value;
+        self.emitter.debug = value;
+        if (self.framer) |*framer| {
+            framer.debug = value;
+        }
     }
 
     pub fn tick(self: *Client) !void {
@@ -72,6 +92,10 @@ pub const Client = struct {
         const startTime = std.time.milliTimestamp();
         self.framer = try Framer.init(self);
         
+        const CONNECTION_TIMEOUT_MS = 5000;
+        var attempts: u8 = 0;
+        const MAX_ATTEMPTS = 3;
+
         const MessageHandler = struct {
             var client: ?*Client = null;
             pub fn handler(msg: []const u8) void {
@@ -92,7 +116,30 @@ pub const Client = struct {
             return error.SocketNotReady;
         }
 
-        try self.sendPing();
+        while (!self.connected) : (attempts += 1) {
+            if (attempts >= MAX_ATTEMPTS) {
+                return error.ConnectionTimeout;
+            }
+
+            if (self.debug) std.debug.print("Connection attempt {d}/{d}\n", .{attempts + 1, MAX_ATTEMPTS});
+            try self.sendPing();
+
+            const start = std.time.milliTimestamp();
+            while (!self.connected) {
+                if (std.time.milliTimestamp() - start > CONNECTION_TIMEOUT_MS) {
+                    if(self.debug) std.debug.print("Connection attempt {d} timed out\n", .{attempts + 1});
+                    break;
+                }
+                std.time.sleep(10 * std.time.ns_per_ms);
+            }
+
+            if (self.connected) break;
+        }
+
+        if (!self.connected) {
+            return error.ConnectionTimeout;
+        }
+
         const endTime = std.time.milliTimestamp();
         if (self.debug) std.debug.print("Connect Function Took {any}ms\n", .{endTime - startTime});
     }
@@ -101,7 +148,7 @@ pub const Client = struct {
         if (self.debug) std.debug.print("Received Packet {any}\n", .{msg[0]});
         var id = msg[0];
         if(id & 0xf0 == 0x80) id = 0x80;
-        
+        if (self.debug) std.debug.print("Received Packet {any}\n", .{id});
         switch (id) {
             repOne.ID => {
                 const data = try repOne.OpenConnectionReplyOne.deserialize(msg);
@@ -131,22 +178,30 @@ pub const Client = struct {
             },
             UnconnectedPong.ID => {
                 if (self.debug) std.debug.print("Received Unconnected Pong\n", .{});
-                const pong = try UnconnectedPong.UnconnectedPong.deserialize(msg);
-                if (self.debug) std.debug.print("Received Unconnected Pong with\n - server_timestamp {any}\n - server_guid {any}\n - message {any}\n", .{ pong.server_timestamp, pong.server_guid, pong.message });
+                self.emitter.emit("unconnected_pong", msg);
                 try self.sendRequest();
             },
             else => {
-                if (self.debug) std.debug.print("Received Unknown Packet {any}\n", .{msg[0]});
+                if (self.debug) std.debug.print("Unknown packet ID: {d}\n", .{id});
+                if (self.framer) |*framer| {
+                    try framer.incomingBatch(msg);
+                }
             },
         }
     }
 
     pub fn deinit(self: *Client) void {
+        const allocator = std.heap.page_allocator;
+        allocator.free(self.host);
         for (self.buffer_pool.items) |buffer| {
-            std.heap.page_allocator.free(buffer);
+            allocator.free(buffer);
         }
         self.buffer_pool.deinit();
         self.socket.deinit();
+        if (self.framer) |*framer| {
+            framer.deinit();
+            self.framer = null;
+        }
     }
 
     fn getBuffer(self: *Client, size: usize) ![]u8 {

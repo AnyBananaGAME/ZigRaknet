@@ -11,6 +11,7 @@ const ConnectionRequestAccepted = @import("../proto/connection_request_acceptes.
 const NewIncommingConnection = @import("../proto/new-incomming-connection.zig").NewIncommingConnection;
 const Ack = @import("../proto/ack.zig").Ack;
 const ConnectedPing = @import("../proto/connected_ping.zig");
+const ConnectedPong = @import("../proto/connected_pong.zig");
 
 pub const Priority = enum(u8) { Medium, High };
 const FragmentMap = std.AutoHashMap(u32, Frame);
@@ -70,8 +71,10 @@ pub const Framer = struct {
     split_buffer: BinaryStream,
     tickCount: u32 = 0,
     mutex: std.Thread.Mutex,
-    frame_pool: std.ArrayList(Frame),
+    frame_arena: std.heap.ArenaAllocator,
     chunk_buffer: []u8,
+    debug: bool = false,
+    serialize_buffer: std.ArrayList(u8),
 
     pub fn init(client: *Client) !Framer {
         const allocator = std.heap.page_allocator;
@@ -99,15 +102,24 @@ pub const Framer = struct {
             .split_buffer = split_buffer,
             .tickCount = 0,
             .mutex = std.Thread.Mutex{},
-            .frame_pool = std.ArrayList(Frame).initCapacity(allocator, 32) catch unreachable,
+            .frame_arena = std.heap.ArenaAllocator.init(allocator),
             .chunk_buffer = chunk_buffer,
+            .debug = client.debug,
+            .serialize_buffer = std.ArrayList(u8).initCapacity(allocator, 1500) catch unreachable,
         };
     }
 
     pub fn incomingBatch(self: *Framer, msg: []const u8) !void {
-        if (self.client.debug) std.debug.print("\n\nIncoming batch: {any}\n\n", .{msg});
+        if (self.client.debug) std.debug.print("Received packet type: {d}\n", .{msg[0]});
         switch (msg[0]) {
-            0 => {},
+            ConnectedPing.ID => {
+                const data = try ConnectedPing.ConnectedPing.deserialize(msg);
+                if (self.client.debug) std.debug.print("\n\nIncoming ConnectedPing: {any}\n\n", .{data});
+                var pong = ConnectedPong.ConnectedPong.init(data.timestamp);
+                const serialized = try pong.serialize();
+                var frame = frameIn(serialized);
+                try self.sendFrame(&frame);
+            },
             16 => {
                 const data = try ConnectionRequestAccepted.deserialize(msg);
                 if (self.client.debug) std.debug.print("\n\nIncoming ConnectionRequestAccepted: {any}\n\n", .{data});
@@ -122,12 +134,24 @@ pub const Framer = struct {
                 const serialized = try packet.serialize();
                 var frame = frameIn(serialized);
                 try self.sendFrame(&frame);
+                
                 self.client.connected = true;
-                self.client.emitter.emit("connect", "");
+                const connect_msg = try std.fmt.allocPrint(self.allocator, "Connected to {s}:{d}", .{self.client.host, self.client.port});
+                if (self.client.debug) std.debug.print("Emitting connect event: {s}\n", .{connect_msg});
+                self.client.emitter.emit("connect", connect_msg);
+                self.allocator.free(connect_msg);
             },
             0x15 => {
+                const disconnect_msg = try std.fmt.allocPrint(self.allocator, "Disconnected from {s}:{d}", .{self.client.host, self.client.port});
+                if (self.client.debug) std.debug.print("Emitting disconnect event: {s}\n", .{disconnect_msg});
+                self.client.emitter.emit("disconnect", disconnect_msg);
+                self.allocator.free(disconnect_msg);
                 std.debug.print("\nReceived Disconnect {any}\n", .{msg});
                 self.client.socket.deinit();
+            },
+            254 => {
+                if (self.client.debug) std.debug.print("\nReceived encapsulated message: {any}\n", .{msg});
+                self.client.emitter.emit("encapsulated", msg);
             },
             else => {
                 if (self.client.debug) std.debug.print("\n\nIncoming batch Unknown packet: {any}\n\n", .{msg[0]});
@@ -196,43 +220,48 @@ pub const Framer = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         
+        if (self.client.debug) std.debug.print("Handling FrameSet with sequence {d}, frames: {d}\n", .{
+            frameSet.sequence, 
+            frameSet.frames.len
+        });
+        
+        if (frameSet.sequence <= self.lastInputSequence) {
+            if (self.client.debug) std.debug.print("Dropping old frameset with sequence {d}\n", .{frameSet.sequence});
+            return;
+        }
+
         const lastInputSeqUnsigned = if (self.lastInputSequence < 0) 
             0 
         else 
             @as(u32, @intCast(self.lastInputSequence));
 
-        if (self.receivedFrameSequences.contains(frameSet.sequence)) {
-            if (self.client.debug) std.debug.print("Dropping duplicate frameset with sequence {any}\n", .{frameSet.sequence});
-            return;
-        }
-
-        if (self.lostFrameSequences.contains(frameSet.sequence)) {
-            _ = self.lostFrameSequences.remove(frameSet.sequence);
-        }
-
-        try self.receivedFrameSequences.put(frameSet.sequence, {});
-
         if (frameSet.sequence == lastInputSeqUnsigned + 1) {
-            if (self.client.debug) std.debug.print("Processing in-order frameset with sequence {any}\n", .{frameSet.sequence});
+            try self.receivedFrameSequences.put(frameSet.sequence, {});
             self.lastInputSequence = @intCast(frameSet.sequence);
             
             for (frameSet.frames) |frame| {
                 try self.handleFrameInternal(frame);
             }
             
-            var nextSeq = frameSet.sequence + 1;
+            var nextSeq = frameSet.sequence +% 1;
             while (self.receivedFrameSequences.contains(nextSeq)) {
-                nextSeq += 1;
-                self.lastInputSequence = @intCast(nextSeq - 1);
+                if (self.client.debug) std.debug.print("Processing buffered frameset {d}\n", .{nextSeq});
+                nextSeq +%= 1;
+                self.lastInputSequence = @intCast(nextSeq -% 1);
             }
-        } else if (frameSet.sequence > lastInputSeqUnsigned + 1) {
-            if (self.client.debug) std.debug.print("Buffering out-of-order frameset with sequence {any}, expecting {any}\n", .{frameSet.sequence, lastInputSeqUnsigned + 1});
+            return;
+        }
+
+        if (frameSet.sequence > lastInputSeqUnsigned + 1) {
+            if (self.client.debug) std.debug.print("Buffering out-of-order frameset {d}, expecting {d}\n", .{
+                frameSet.sequence, 
+                lastInputSeqUnsigned + 1
+            });
             
-            // Emit drop_frameset for out-of-order frames that we're buffering
-            self.client.emitter.emit("drop_frameset", "");
+            try self.receivedFrameSequences.put(frameSet.sequence, {});
             
-            var index = lastInputSeqUnsigned + 1;
-            while (index < frameSet.sequence) : (index += 1) {
+            var index = lastInputSeqUnsigned +% 1;
+            while (index < frameSet.sequence) : (index +%= 1) {
                 try self.lostFrameSequences.put(index, {});
             }
             
@@ -241,8 +270,22 @@ pub const Framer = struct {
             }
         }
 
-        if (frameSet.sequence > std.math.maxInt(i32)) {
-            self.lastInputSequence = 0;
+        if (!self.client.connected) {
+            const size = self.receivedFrameSequences.count();
+            if (size > 0) {
+                var sequences = try std.ArrayList(u32).initCapacity(self.allocator, size);
+                defer sequences.deinit();
+
+                var it = self.receivedFrameSequences.keyIterator();
+                while (it.next()) |key| {
+                    try sequences.append(key.*);
+                }
+
+                var ack = try Ack.init(sequences.items);
+                self.receivedFrameSequences.clearAndFree();
+                const serialized = try ack.serialize();
+                try self.client.send(serialized);
+            }
         }
     }
 
@@ -251,6 +294,9 @@ pub const Framer = struct {
             try self.incomingBatch(frame.payload);
             return;
         }
+
+        const arena = &self.frame_arena;
+        defer _ = arena.reset(.free_all);
 
         if (frame.isSplit()) {
             try self.handleSplitInternal(frame);
@@ -331,15 +377,18 @@ pub const Framer = struct {
         var fragment_map = if (self.fragmentsQueue.getPtr(splitId)) |map|
             map
         else blk: {
-            var new_map = FragmentMap.init(self.allocator);
+            const new_map = FragmentMap.init(self.allocator);
             try self.fragmentsQueue.put(splitId, new_map);
-            break :blk &new_map;
+            break :blk self.fragmentsQueue.getPtr(splitId).?;
         };
 
         try fragment_map.put(frame.split_frame_index.?, frame);
 
         if (fragment_map.count() == frame.split_size.?) {
             try self.processSplitFrame(frame, fragment_map);
+            if (self.fragmentsQueue.getPtr(splitId)) |map| {
+                map.deinit();
+            }
             _ = self.fragmentsQueue.remove(splitId);
         }
     }
@@ -353,21 +402,22 @@ pub const Framer = struct {
     fn processSplitFrame(self: *Framer, frame: Frame, fragment_map: *FragmentMap) !void {
         if (frame.split_size == null) return error.InvalidFrame;
         
-        self.split_buffer.reset();
+        self.serialize_buffer.clearRetainingCapacity();
         
         var i: u32 = 0;
         while (i < frame.split_size.?) : (i += 1) {
             const sframe = fragment_map.get(i) orelse return error.MissingFragment;
-            try self.split_buffer.write(sframe.payload);
+            try self.serialize_buffer.appendSlice(sframe.payload);
         }
 
+        const payload = try self.frame_arena.allocator().dupe(u8, self.serialize_buffer.items);
         const nFrame = Frame.init(
             frame.reliable_frame_index,
-            frame.sequence_frame_index,
+            frame.sequence_frame_index, 
             frame.ordered_frame_index,
             frame.order_channel,
             frame.reliability,
-            try self.split_buffer.getBytes(),
+            payload,
             null,
             null,
             null
@@ -380,19 +430,29 @@ pub const Framer = struct {
         self.receivedFrameSequences.deinit();
         self.lostFrameSequences.deinit();
         self.inputOrderIndex.deinit();
-        self.frame_pool.deinit();
+        self.frame_arena.deinit();
         self.allocator.free(self.chunk_buffer);
+        self.split_buffer.deinit();
 
         var it = self.fragmentsQueue.iterator();
         while (it.next()) |entry| {
             entry.value_ptr.deinit();
         }
         self.fragmentsQueue.deinit();
+        
         var it2 = self.inputOrderingQueue.iterator();
         while (it2.next()) |entry| {
             entry.value_ptr.deinit();
         }
         self.inputOrderingQueue.deinit();
+        
+        var it3 = self.output_backup.iterator();
+        while (it3.next()) |entry| {
+            self.allocator.free(entry.value_ptr.*);
+        }
+        self.output_backup.deinit();
+
+        self.serialize_buffer.deinit();
     }
 
     pub fn sendConnection(self: *Framer) !void {
@@ -445,37 +505,32 @@ pub const Framer = struct {
             
             @memcpy(self.chunk_buffer[offset..][0..chunk_len], frame.payload[offset..end]);
             
-            var nFrame = if (self.frame_pool.items.len > 0)
-                self.frame_pool.pop()
-            else
-                Frame.init(
-                    frame.reliable_frame_index,
-                    frame.sequence_frame_index,
-                    frame.ordered_frame_index,
-                    frame.order_channel,
-                    frame.reliability,
-                    self.chunk_buffer[offset..][0..chunk_len],
-                    @intCast(chunk_index),
-                    splitId,
-                    @intCast(splitSize)
-                );
+            var nFrame = Frame.init(
+                frame.reliable_frame_index,
+                frame.sequence_frame_index,
+                frame.ordered_frame_index,
+                frame.order_channel,
+                frame.reliability,
+                self.chunk_buffer[offset..][0..chunk_len],
+                @intCast(chunk_index),
+                splitId,
+                @intCast(splitSize)
+            );
 
             try self.queueFrame(&nFrame, .High);
         }
 
-        if (self.frame_pool.items.len > 128) {
-            self.frame_pool.shrinkRetainingCapacity(64);
-        }
+        _ = self.frame_arena.reset(.retain_capacity);
     }
 
-    pub fn queueFrame(self: *Framer, frame: *Frame, priority: Priority) !void {
+    pub fn queueFrame(self: *Framer, frame: *const Frame, priority: Priority) !void {
         const frame_length = frame.getByteLength();
         
         if (self.currentQueueLength + frame_length > self.client.mtu_size - 36) {
-            const count = @as(u32, @intCast(self.outputFrames.items.len));
-            try self.sendQueue(count);
+            try self.sendQueue(@intCast(self.outputFrames.items.len));
         }
 
+        try self.outputFrames.ensureTotalCapacity(self.outputFrames.items.len + 1);
         try self.outputFrames.append(frame.*);
         self.currentQueueLength += frame_length;
 
@@ -487,15 +542,30 @@ pub const Framer = struct {
     pub fn sendQueue(self: *Framer, count: u32) !void {
         if (count == 0 or self.outputFrames.items.len == 0) return;
 
+        self.serialize_buffer.clearRetainingCapacity();
+        
         const actual_count = @min(count, @as(u32, @intCast(self.outputFrames.items.len)));
         var frameset = FrameSet.init(self.outputSequence, self.outputFrames.items[0..actual_count]);
         
-        const frames_copy = try self.allocator.dupe(Frame, frameset.frames);
+        const frames_copy = try self.allocator.alloc(Frame, actual_count);
+        @memcpy(frames_copy, self.outputFrames.items[0..actual_count]);
+        
+        if (self.output_backup.get(self.outputSequence)) |old_frames| {
+            self.allocator.free(old_frames);
+        }
         try self.output_backup.put(self.outputSequence, frames_copy);
         
         const serialized = try frameset.serialize();
-        try self.client.send(serialized);
-        self.outputSequence += 1;
+        
+        if (self.client.debug) std.debug.print("Sending queue with {d} frames, size: {d}\n", .{actual_count, serialized.len});
+        self.client.send(serialized) catch |err| {
+            if (self.client.debug) std.debug.print("Error sending queue: {any}\n", .{err});
+            self.allocator.free(frames_copy);
+            _ = self.output_backup.remove(self.outputSequence);
+            return err;
+        };
+        
+        self.outputSequence +%= 1;
 
         var removed_length: usize = 0;
         for (self.outputFrames.items[0..actual_count]) |f| {
