@@ -9,13 +9,6 @@ if (!client) {
     process.exit(1)
 }
 
-// Enable debug mode
-// if (!native.setDebug(client, true)) {
-    // console.error("Failed to enable debug mode")
-    // process.exit(1)
-// }
-
-// Handle encapsulated data
 console.log("Registering encapsulated event handler")
 const success = native.on(client, "encapsulated", (data) => {
     try {
@@ -40,7 +33,6 @@ if (!success) {
     process.exit(1)
 }
 
-// Log connection events
 native.on(client, "connect", () => {
     console.log("Connected to server")
 })
@@ -50,14 +42,12 @@ native.on(client, "disconnect", () => {
     process.exit(0)
 })
 
-// Connect to server
 console.log("Connecting to server...")
 if (!native.connect(client)) {
     console.error("Failed to connect to server")
     process.exit(1)
 }
 
-// Keep the process alive
 const interval = setInterval(() => {
     if (!native.isConnected(client)) {
         console.log("Client disconnected, cleaning up")
@@ -67,7 +57,6 @@ const interval = setInterval(() => {
     }
 }, 1000)
 
-// Cleanup on exit
 process.on('SIGINT', () => {
     console.log("Cleaning up...")
     clearInterval(interval)
