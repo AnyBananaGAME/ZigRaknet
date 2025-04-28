@@ -11,14 +11,23 @@ pub const FrameSet = struct {
         return FrameSet{ .sequence = sequence, .frames = frames };
     }
 
-    pub fn serialize(self: *FrameSet) ![]const u8 {
-        var stream = try BinaryStream.init(null, 0);
+    pub fn writeToStream(self: *FrameSet, stream: *BinaryStream) !void {
         try stream.writeUint8(ID);
         try stream.writeU24(self.sequence, .Little);
         for (self.frames) |frame| {
-            const frame_bytes = try frame.write();
-            try stream.write(frame_bytes);
+            try frame.writeToStream(stream);
         }
+    }
+
+    pub fn serialize(self: *FrameSet) ![]const u8 {
+        // Pre-calculate total size needed
+        var total_size: usize = 4; // ID + sequence
+        for (self.frames) |frame| {
+            total_size += frame.getByteLength();
+        }
+
+        var stream = try BinaryStream.initCapacity(null, total_size);
+        try self.writeToStream(&stream);
         return try stream.getBytes();
     }
 
@@ -26,7 +35,11 @@ pub const FrameSet = struct {
         var stream = try BinaryStream.init(bytes, 0);
         _ = try stream.readUint8(); // ID
         const sequence = try stream.readU24(.Little);
-        var frames: std.ArrayList(Frame) = std.ArrayList(Frame).init(std.heap.page_allocator);
+
+        // Pre-allocate frames with estimated capacity
+        var frames = std.ArrayList(Frame).initCapacity(std.heap.page_allocator, @divFloor(bytes.len, 32) // Estimate average frame size as 32 bytes
+        ) catch unreachable;
+
         while (stream.offset < bytes.len) {
             const frame = try Frame.read(&stream);
             try frames.append(frame);

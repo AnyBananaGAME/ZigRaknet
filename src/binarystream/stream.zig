@@ -13,13 +13,29 @@ pub const BinaryStream = struct {
 
     pub fn init(binary: ?[]const u8, offset: ?i16) !BinaryStream {
         const allocator = std.heap.page_allocator;
-        var list = std.ArrayList(u8).init(allocator);
+        var list = if (binary) |b|
+            try std.ArrayList(u8).initCapacity(allocator, b.len)
+        else
+            std.ArrayList(u8).init(allocator);
+
         if (binary) |b| {
             try list.appendSlice(b);
         }
         return BinaryStream{
             .binary = list,
             .offset = offset orelse 0,
+        };
+    }
+
+    pub fn initCapacity(binary: ?[]const u8, capacity: usize) !BinaryStream {
+        const allocator = std.heap.page_allocator;
+        var list = try std.ArrayList(u8).initCapacity(allocator, capacity);
+        if (binary) |b| {
+            try list.appendSlice(b);
+        }
+        return BinaryStream{
+            .binary = list,
+            .offset = 0,
         };
     }
 
@@ -44,6 +60,13 @@ pub const BinaryStream = struct {
     }
 
     pub fn write(self: *BinaryStream, data: []const u8) !void {
+        try self.binary.appendSlice(data);
+    }
+
+    pub fn writeNoAlloc(self: *BinaryStream, data: []const u8) !void {
+        if (self.binary.capacity < self.binary.items.len + data.len) {
+            return error.OutOfMemory;
+        }
         try self.binary.appendSlice(data);
     }
 

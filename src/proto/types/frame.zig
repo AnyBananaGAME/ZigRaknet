@@ -94,15 +94,11 @@ pub const Frame = struct {
         );
     }
 
-    pub fn write(self: *const Frame) ![]const u8 {
-        var stream = try BinaryStream.init(null, 0);
+    pub fn writeToStream(self: *const Frame, stream: *BinaryStream) !void {
         const flags: u8 = ((@as(u8, @intFromEnum(self.reliability)) << 5) & 0xe0) |
             if (self.isSplit()) @intFromEnum(Flags.Split) else 0;
         try stream.writeUint8(flags);
-        // std.debug.print("Split: {any}\n", .{self.isSplit()});
-        // std.debug.print("flags: {any}\n", .{flags});
-        // std.debug.print("reliability: {any}\n", .{self.reliability});
-        // Length is in bits, so multiply by 8
+
         const length_in_bits = @as(u16, @intCast(self.payload.len)) * 8;
         try stream.writeU16(length_in_bits, .Big);
 
@@ -122,6 +118,11 @@ pub const Frame = struct {
             try stream.writeU32(self.split_frame_index.?, .Big);
         }
         try stream.write(self.payload);
+    }
+
+    pub fn write(self: *const Frame) ![]const u8 {
+        var stream = try BinaryStream.init(null, 0);
+        try self.writeToStream(&stream);
         return try stream.getBytes();
     }
 

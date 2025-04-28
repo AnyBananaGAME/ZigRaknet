@@ -15,7 +15,7 @@ fn cleanFormatCodes(str: []const u8) []const u8 {
     var i: usize = 0;
     while (i < str.len - 1) : (i += 1) {
         if (str[i] == 194 and str[i + 1] == 186) {
-            return str[i + 2..];
+            return str[i + 2 ..];
         }
     }
     return str;
@@ -34,21 +34,21 @@ fn stripFormatCodes(allocator: std.mem.Allocator, str: []const u8) ![]const u8 {
         try result.append(str[i]);
         i += 1;
     }
-    
+
     return try result.toOwnedSlice();
 }
 
 pub fn parseServerInfo(msg: []const u8) !ServerInfo {
     const allocator = std.heap.page_allocator;
-    var parts = std.mem.split(u8, msg, ";");
-    
+    var parts = std.mem.splitScalar(u8, msg, ';');
+
     const type_str = parts.next() orelse return error.InvalidFormat;
     const raw_message = parts.next() orelse return error.InvalidFormat;
     const protocol_str = parts.next() orelse return error.InvalidFormat;
     const version = parts.next() orelse return error.InvalidFormat;
     const player_count_str = parts.next() orelse return error.InvalidFormat;
     const max_players_str = parts.next() orelse return error.InvalidFormat;
-    _ = parts.next(); 
+    _ = parts.next();
     const raw_server_name = parts.next() orelse return error.InvalidFormat;
     const gamemode = parts.next() orelse return error.InvalidFormat;
 
@@ -65,4 +65,4 @@ pub fn parseServerInfo(msg: []const u8) !ServerInfo {
         .serverName = server_name,
         .gamemode = gamemode,
     };
-} 
+}
