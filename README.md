@@ -1,19 +1,30 @@
-# ZNET - Raknet in Zig.
+# ZNET 🚀
 
-A simple and easy to use RakNet implementation in Zig.
+[![Language](https://img.shields.io/badge/language-Zig-orange.svg)](https://ziglang.org/)
+[![License](https://img.shields.io/badge/license-Apache-blue.svg)](LICENSE)
 
-## Installation
+A fast, reliable, and easy-to-use RakNet implementation in Zig. Perfect for game networking, especially for Minecraft Bedrock Edition clients.
+
+## ✨ Features
+
+- 🔥 Zig implementation - no external dependencies
+- 🚀 High-performance networking with non-blocking I/O
+- 🛡️ Reliable and ordered packet delivery
+- 🎮 Minecraft Bedrock Edition compatible
+
+## 🚀 Installation
 
 ```bash
 git clone https://github.com/AnyBananaGAME/ZigRaknet.git
 cd ZigRaknet
 zig build
-node Test/test.js
 ```
 
-## Usage in Zig
+## 📚 Usage
 
-```ts
+Here's a simple example of how to create a client and connect to a RakNet server:
+
+```zig
 const Client = @import("./src/client/client.zig").Client;
 const std = @import("std");
 
@@ -27,28 +38,18 @@ while (true) {
 }
 ```
 
-## Usage in Node.js
+## 🤝 Contributing
 
-```ts
-import { createRequire } from 'node:module'
-const require = createRequire(import.meta.url)
+Contributions are welcome! Feel free to:
+- Report bugs
+- Suggest new features
+- Submit pull requests
 
-// If you have the .d.ts you can do
-/**
- * @type {import('./index').zigraknet}
- */
-const native = require(`${process.cwd()}/zig-out/lib/example.node`)
+## 📝 License
 
-const client = native.createClient("127.0.0.1", 19132);
-if (!client) {
-    throw new Error("Failed to create client");
-}
+This project is licensed under the Apache-2.0 License.
 
-native.connect(client);
-setInterval(() => {
-    console.log('Is connected:', native.isConnected(client));
-}, 1000);
-```
+## 💖 Credits
 
-## Credits
-- Thanks to a user on Discord (akashic_records_of_the_abyss) for the name suggestion.
+- Thanks to a user on Discord (akashic_records_of_the_abyss) for the name suggestion
+- Inspired by the RakNet protocol
